@@ -1,6 +1,7 @@
 # 🚀 Campaign Tools Extension: Development Milestones
 
-This document outlines the phased roadmap for transitioning the existing Google Sheets extension to a more maintainable and testable TypeScript-based architecture.
+This document outlines the phased roadmap for transitioning the existing Google Sheets extension to 
+a more maintainable and testable TypeScript-based architecture.
 
 ---
 

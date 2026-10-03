@@ -64,19 +64,9 @@ Set budget alerts	✅	gcloud beta billing budgets create
 
 
 
-OLD instructions:
-Setting up distance tools on new google account (e.g., a test account for dev purposes / script enhancement)
-
-1.  manually create test google account
-2.  link to billing acct
-    export TEST_ACCOUNT_EMAIL={email of your new test account}
-    bash link_to_main_acct_billing.sh  $GOOGLE_ACCT $TEST_ACCOUNT_EMAIL
-(master) /home/chris/grassroots_campaign_tools  > 
-
-
-
 npm install -g @google/clasp@2.4.1
-might need to do this because the latest versions (e.g. 2.4.2 and newer) introduced a breaking change in how .clasp.json and .clasprc.json were handled, especially around:
+might need to do this because the latest versions (e.g. 2.4.2 and newer) introduced 
+a breaking change in how .clasp.json and .clasprc.json were handled, especially around:
 
     Broken or noisy clasp run behavior:
 
