@@ -56,7 +56,7 @@ SCRIPT_ID=$(jq -r '.scriptId' .clasp.json)
 }
 
 # === Get SHEET_ID via Apps Script API ===
-ACCESS_TOKEN=$(jq -r '.tokens.default.access_token' ~/.clasprc.json)
+ACCESS_TOKEN=$(get_clasp_access_token)
 
 SCRIPT_INFO_URL="https://script.googleapis.com/v1/projects/${SCRIPT_ID}"
 
@@ -119,7 +119,7 @@ echo "  GCP Project ID:     $PROJECT_ID"
 echo "  GCP Project Number: $PROJECT_NUMBER"
 echo ""
 echo "Open the following URL in your browser:"
-echo "  $SHEET_URL""
+echo "  $SHEET_URL"
 echo ""
 echo "➡️  Then go to:"
 echo "  Extensions > Apps Script Dashboard"
