@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      html, body { height: 100%; margin: 0; font-family: sans-serif; }
+      #label { padding: 8px 12px; font-size: 14px; }
+      #map { height: calc(100% - 40px); }
+      #error { color: #b00020; padding: 12px; display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="label"></div>
+    <div id="map"></div>
+    <div id="error"></div>
+    <script>
+      // Server-provided data (key, coordinates, address). The key reaches the browser here,
+      // so restrict it to the Maps APIs in the Cloud Console (see init_setup/SETUP.md).
+      const data = <?!= dataJson ?>;
+
+      function initMap() {
+        const position = { lat: data.lat, lng: data.lng };
+        const map = new google.maps.Map(document.getElementById('map'), {
+          center: position,
+          zoom: 15,
+        });
+        new google.maps.Marker({ position: position, map: map, title: data.label });
+        document.getElementById('label').textContent = data.label;
+      }
+
+      function showError(message) {
+        const el = document.getElementById('error');
+        el.textContent = message;
+        el.style.display = 'block';
+      }
+
+      const script = document.createElement('script');
+      script.src = 'https://maps.googleapis.com/maps/api/js?key=' +
+        encodeURIComponent(data.apiKey) + '&callback=initMap';
+      script.async = true;
+      script.onerror = () => showError('Could not load the Maps JavaScript API.');
+      document.head.appendChild(script);
+    </script>
+  </body>
+</html>
