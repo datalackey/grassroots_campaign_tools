@@ -3,7 +3,7 @@
 Draft, to be iterated. Steps marked **(manual)** cannot be scripted. Run all scripts from the repo root,
 because they read and write `maps_config.env` there.
 
-Final result: a Google Sheet with the Campaign menu, bound to an Apps Script project that is linked
+Final result: a Google Sheet with a **Maps Demo** menu, bound to an Apps Script project that is linked
 to a billing-enabled GCP project holding your Maps API key.
 
 > **Tip: use a private (incognito) browser window for every step that involves a Google account.**
@@ -16,10 +16,10 @@ to a billing-enabled GCP project holding your Maps API key.
 ## Phase 0: Dev machine (NixOS)
 
 **What is clasp, and why do we need it?** `clasp` ("Command Line Apps Script") is Google's official
-command-line tool for Apps Script. Our Google sheet extension's code resides in  TypeScript modules 
-on your machine, but the code only runs inside Google's Apps Script service. clasp is the bridge: 
-it creates the Sheet and its script project (`create_sheet.sh`) and uploads the built code to it
-(`push_content_to_script_by_id.sh`), so you never copy and paste into the Apps Script editor.
+command-line tool for Apps Script. The demo's code lives in plain JavaScript and HTML files in
+`demo/` on your machine, but it only runs inside Google's Apps Script service. clasp is the bridge:
+it creates the Sheet and its script project (`create_sheet.sh`) and uploads the code to it
+(`push_demo.sh`), so you never copy and paste into the Apps Script editor.
 It signs in to your Google account with its own login (`clasp login`, see
 [Appendix B](#appendix-b-how-gcloud-clasp-and-your-google-account-fit-together)).
 See [Google's clasp guide](https://developers.google.com/apps-script/guides/clasp).
@@ -63,10 +63,11 @@ Google offers a free Maps usage tier, but billing must be enabled and calls beyo
 
 10. `gcloud auth login` as the new account (the script prompts for this if you are not logged in).
 11. `bash init_setup/billing_linked_new_project.sh -p <project-id> -b $BILLING_ID`
-    - Project IDs are globally unique; pick something like `campaigntools-<timestamp>`.
-    - Creates the project, links billing, grants you `roles/owner`, and enables Sheets, Drive, Script,
-      Places, Maps, Geocoding and several other APIs (deliberately permissive for prototyping).
-    - Writes `PROJECT_ID` to `./maps_config.env`.
+    - Project IDs are globally unique; pick something like `mapsdemo-<timestamp>`.
+    - Creates the project (or reuses it if it exists), links billing, grants you `roles/owner`, and
+      enables Maps JavaScript, Geocoding, API Keys, Apps Script, Sheets and Drive, plus two
+      supporting APIs. Safe to re-run.
+    - Writes `PROJECT_ID` to `maps_config.env` at the repo root, keeping any other entries.
 12. `bash init_setup/verify_project_ownership_and_apps_script_api_enabled.sh`
     - Confirms your account is Owner/Editor of `PROJECT_ID`.
     - Then asks you to confirm the Apps Script API is **On** at
@@ -100,45 +101,42 @@ source maps_config.env && echo "PROJECT_ID=$PROJECT_ID"
 This sets the variable for the current shell only, so repeat it in any new terminal. If the echo
 shows an empty value, `maps_config.env` is missing `PROJECT_ID` (Phase 3 writes it).
 
-13. Confirm the APIs the extension calls were enabled in Phase 3:
+13. Confirm the APIs the demo calls were enabled in Phase 3:
 
     ```
-    gcloud services list --enabled --project="$PROJECT_ID" | grep -iE "maps|geocod|places"
+    gcloud services list --enabled --project="$PROJECT_ID" | grep -iE "maps|geocod"
     ```
 
     Expected output includes:
-    - `maps-backend.googleapis.com` (Maps JavaScript API, Filter dialog),
-    - `geocoding-backend.googleapis.com` (Geocoding API, address lookup) and
-    - `places-backend.googleapis.com` (Places API, typeahead).
+    - `maps-backend.googleapis.com` (Maps JavaScript API: the map dialog, in the browser) and
+    - `geocoding-backend.googleapis.com` (Geocoding API: address to lat/lng, on the server).
 
-    See [`ui/EXTENSION_COMPONENTS.md`](../ui/EXTENSION_COMPONENTS.md) for which part of the
-    extension uses which API.
-    
+    The code is in [`demo/Code.js`](../demo/Code.js) and
+    [`demo/MapDialog.html`](../demo/MapDialog.html).
 
-    If any are missing, enable as needed (already-enabled services are unaffected if you enable a new one):
+    If either is missing, enable it (already-enabled services are unaffected):
 
-        ```
-        gcloud services enable maps-backend.googleapis.com geocoding-backend.googleapis.com \
-          places-backend.googleapis.com --project="$PROJECT_ID"
-        ```
+    ```
+    gcloud services enable maps-backend.googleapis.com geocoding-backend.googleapis.com \
+      --project="$PROJECT_ID"
+    ```
 
-14. Enable the API that manages keys:
+14. Enable the API that manages keys. Phase 3 already does this, so this is only a check:
 
     ```
     gcloud services enable apikeys.googleapis.com --project="$PROJECT_ID"
     ```
 
-15. Create the key, restricted to the three APIs (unverified flags):
+15. Create the key, restricted to the two APIs the demo uses:
 
     ```
-    gcloud services api-keys create --project="$PROJECT_ID" --display-name="campaign-maps" \
+    gcloud services api-keys create --project="$PROJECT_ID" --display-name="maps-demo" \
       --api-target=service=maps-backend.googleapis.com \
-      --api-target=service=geocoding-backend.googleapis.com \
-      --api-target=service=places-backend.googleapis.com
+      --api-target=service=geocoding-backend.googleapis.com
     ```
 
     No application restriction (website/IP) is set, on purpose: geocoding calls come from Google's
-    servers and the Filter dialog's calls from a Google-hosted domain, so a referrer restriction
+    servers and the map dialog's calls from a Google-hosted domain, so a referrer restriction
     such as the `https://script.google.com/*` in `NOTES.txt` is likely to cause `REQUEST_DENIED`
     (unverified).
 
@@ -146,7 +144,7 @@ shows an empty value, `maps_config.env` is missing `PROJECT_ID` (Phase 3 writes 
 
     ```
     KEY_NAME=$(gcloud services api-keys list --project="$PROJECT_ID" \
-      --filter="displayName=campaign-maps" --format="value(name)")
+      --filter="displayName=maps-demo" --format="value(name)")
     gcloud services api-keys get-key-string "$KEY_NAME" --format="value(keyString)"
     ```
 
@@ -190,9 +188,9 @@ Reference: https://developers.google.com/maps/gmp-get-started
 
 20. `clasp login` (sign in as the same account). **(private window)** clasp prints an
     authorization URL. Open that URL in the private window. The redirect goes to
-    `http://localhost:<port>` on your machine, so any browser works. `create_sheet.sh` does this automatically if
-    `~/.clasprc.json` is missing.
-21. `bash ui/scripts/create_sheet.sh [-D]`
+    `http://localhost:<port>` on your machine, so any browser works. `create_sheet.sh` does this
+    automatically if `~/.clasprc.json` is missing.
+21. `bash init_setup/create_sheet.sh [-D]`
     - Runs `clasp create --type sheets` in a temp directory.
     - Reads `SCRIPT_ID` and the sheet's `parentId`, and saves `SCRIPT_ID`, `SHEET_ID`, `SHEET_URL`
       to `maps_config.env`.
@@ -212,31 +210,111 @@ Reference: https://developers.google.com/maps/gmp-get-started
       authorized must re-authorize after the switch.
     - Press Enter in the terminal when done.
 
-## Phase 7: Build and push (final step)
+## Phase 7: Push the demo code (final step)
 
-23. `bash ui/scripts/push_content_to_script_by_id.sh`
+The demo is plain JavaScript and HTML in `demo/`, so there is no build step.
+
+23. **First push:** `bash init_setup/push_demo.sh`
     - Requires `SCRIPT_ID` and `MAPS_API_KEY` in `maps_config.env`.
-    - Builds the TypeScript with webpack, clones the script into a temp directory, injects a
-      one-time `Init.js` that stores `GOOGLE_MAPS_API_KEY` in script properties, then runs
-      `clasp push --force`.
-    - Use `-u` / `--update` on later pushes to skip `Init.js` injection.
-24. Open the sheet and reload. The **Campaign** menu should appear. On first use, authorize the script
-    (you may see an "unverified app" warning, which is expected in Testing mode).
+    - Clones the (empty) script, copies in `demo/Code.js`, `Geocode.js`, `MapDialog.html` and
+      `appsscript.json`, adds a temporary `Init.js`, and runs `clasp push --force`.
+    - `Init.js` stores the Maps key in the script's **script properties** the first time the Sheet
+      is opened.
+    - **Security: after this push your Maps key is in the script source, in plain text.** Anyone
+      who can open the Sheet can read the script, because people with view access to a Sheet can
+      also view its bound script. **Step 25 removes it and is not optional.** Do not share the
+      Sheet, and do not skip step 25.
+    - `--dry-run` assembles the files and lists them without pushing.
+24. **(private window)** Open the Sheet and reload. A **Maps Demo** menu should appear.
+    - Type an address in a cell, for example `1600 Amphitheatre Parkway, Mountain View, CA`.
+    - Select that cell, then **Maps Demo, Geocode selected cell**. The first time, nothing is
+      geocoded: see "First-use authorization" below, then run the menu item again. The cells to
+      the right then fill with the formatted address, latitude and longitude.
+    - Select the cell again, then **Maps Demo, Show selected cell on map**. A dialog shows a map
+      with a marker.
+    - If the key is missing you will see "GOOGLE_MAPS_API_KEY is not set". Opening the Sheet should
+      have run `Init.js`. If it did not (unverified), add the property by hand: Apps Script,
+      Project Settings, **Script Properties**, name `GOOGLE_MAPS_API_KEY`, value your key.
+
+    **First-use authorization.** The first time anyone runs a menu item, Google asks them to
+    approve the script. Observed on a real setup, in this order:
+    1. A brief message, **"Authorization is required for this script to run"**. The menu item stops
+       here. It does not continue after you approve, so you run it again in step 5.
+    2. A Google dialog: **"Google hasn't verified this app. You've been given access to an app
+       that's currently being tested."** This is the Testing-mode consent screen from Phase 5 and
+       means your account is on the Test users list and the script is linked to your project
+       (step 22). The dialog offers two buttons, **Back to safety** and **Continue**. Click
+       **Continue**. **Back to safety** cancels the authorization, and the menu items will not run.
+    3. Choose your account if asked.
+    4. A permissions page lists what the script wants. Leave **every box ticked** and click
+       **Continue** or **Allow**. If you untick one, a later run fails with "Authorization is
+       required to perform that action".
+    5. Back in the Sheet, run the menu item again.
+
+    The permissions page (observed) is titled "<your app name> wants access to your Google Account"
+    and lists three permissions, each matched to the code that needs it:
+
+    | Permission shown | Used by |
+    |---|---|
+    | See, edit, create, and delete all your Google Sheets spreadsheets | Reading the selected cell and writing the results |
+    | Connect to an external service | Calling the Geocoding API (`UrlFetchApp`) |
+    | Display and run third-party web content in prompts and sidebars | The map dialog |
+
+    The app name is the one you entered on the consent screen in Phase 5. The page says it cannot
+    show Privacy Policy or Terms of Service links, because none are set. That is fine while testing.
+
+    If the dialog instead says **"Access blocked"** or **"Error 403: access_denied"**, your account
+    is not on the Test users list (Phase 5, step 18) or the script is not yet linked to the project
+    (step 22). Fix that and try again. (Expected from Google's docs, not observed.)
+
+    **Viewing the log (did `Init.js` work?).** The demo writes `console.log` lines. Open the Sheet
+    first so there is something to read, then use either:
+    - **Apps Script editor:** open the script, click **Executions** in the left sidebar (clock
+      icon), and open the `onOpen` row to see its log lines.
+    - **Command line:** `bash init_setup/logs.sh` (add `--watch` to follow new lines). It also
+      prints Cloud audit entries for the project, so filter for the demo's lines:
+      `bash init_setup/logs.sh | grep -E "Init.js|onOpen|Geocod|geocodeSel|showMapDialog"`
+
+    What to look for after the first reload of the Sheet:
+
+    ```
+    Init.js: stored GOOGLE_MAPS_API_KEY in script properties
+    onOpen: GOOGLE_MAPS_API_KEY is set (length 39)
+    ```
+
+    If `onOpen` says the key is **NOT set**, `Init.js` did not run: add the property by hand (see
+    above). The log never contains the key or the addresses, only status information such as
+    `Geocoding API: HTTP 200, status OK` or `status REQUEST_DENIED, message: ...`.
+    Logs are stored in the linked GCP project (step 22), so they may take a minute to appear.
+    `init_setup/logs.sh` was verified to show these lines on a real setup. The Executions page is
+    not yet verified.
+25. **Second push (required for security):** `bash init_setup/push_demo.sh --update`
+    - Pushes `demo/` without `Init.js`, which deletes `Init.js` and the key from the script source.
+      The key then lives only in **script properties**, which are not shown in the source.
+    - The script checks the result and prints `Verified: Init.js is gone`. If it prints an error,
+      run it again. You can also look in the Apps Script editor: there must be no `Init` file.
+    - Run it only after step 24 shows the menu works and the log says the key was stored. If you
+      run it earlier and the key was never stored, add it by hand under Project Settings, **Script
+      Properties** (step 24).
+    - Reload the Sheet and repeat the checks in step 24.
+    - **Use `--update` for every later push** (for example after editing `demo/`). The key is
+      already in script properties, so the plain first-push mode is only needed for a new Sheet
+      and script. The two pushes are one-time and different: the first adds `Init.js`, the second
+      removes it.
 
 ## Known issues and gaps
 
-- `init_setup/create_sheet.sh` is the older manual variant and does not record `SCRIPT_ID`.
-  Prefer `ui/scripts/create_sheet.sh`.
-- `bootstrap.sh` and the push script run `npm install -g clasp`, which is the wrong package name
-  (`@google/clasp`) and conflicts with the no-global-installs convention.
 - `init_setup/shell.nix` duplicates the root `shell.nix`.
-- `verify_project_ownership_and_apps_script_api_enabled.sh` has no shebang.
-- API key creation could be scripted with `gcloud services api-keys create`.
+- Storing the key with a temporary `Init.js` relies on top-level code running when the Sheet opens.
+  This worked on the test setup (confirmed in the log). Step 24 keeps a manual fallback.
+- A trimmed API list in `billing_linked_new_project.sh` has not been run on a brand-new project.
+- `ui/` still holds the original geoCRM app and its build files, which are being removed.
 
 ## Reset
 
-`. init_setup/full_log_out.sh` revokes gcloud/clasp credentials. **It also deletes
-`~/.config/gcloud` and the Firefox profile and cache (`~/.mozilla/firefox`), so use it with care.**
+`. init_setup/full_log_out.sh` revokes and deletes the local gcloud and clasp credentials
+(`~/.config/gcloud`, `~/.clasprc.json`). It does not touch your browser: sign out of Google there
+yourself, or use a private window.
 Delete the Google account at https://myaccount.google.com/deleteaccount.
 
 ## Appendix A: Credentials vs. API keys
@@ -285,7 +363,7 @@ you in to the other.
   IAM, API keys)                 find the sheet)
    │                                │
    ▼                                ▼
- used by init_setup/*.sh        used by ui/scripts/*.sh
+ used by init_setup/*.sh        used by create_sheet.sh,
  and the Phase 3-4 commands     (Phases 6-7)
 ```
 
@@ -312,7 +390,7 @@ you in to the other.
    │              (payment method)                           │
    │                                                         ▼
    ├── owns ──► GCP project (e.g. doikayt-test-1) ◄── billing linked here
-   │              │  - APIs enabled: Maps JS, Geocoding, Places, Sheets, ...
+   │              │  - APIs enabled: Maps JS, Geocoding, API Keys, Sheets, ...
    │              │  - API key (restricted to the Maps APIs)
    │              │  - OAuth consent screen
    │              ▲
@@ -338,7 +416,7 @@ you in to the other.
 |---|---|---|---|
 | `.clasp.json` | Project folder, git-ignored (`create_sheet.sh` makes one in a temp directory) | `scriptId`, `rootDir`, `parentId` | No |
 | `~/.clasprc.json` | Your home directory | Your login: tokens, the granted `scope` list, clasp's OAuth client settings | **Yes** |
-| `appsscript.json` | `ui/appsscript.json`, and inside the script project | The extension's time zone and runtime, and optionally its `oauthScopes` | No |
+| `appsscript.json` | `demo/appsscript.json`, and inside the script project | The extension's time zone and runtime, and optionally its `oauthScopes` | No |
 
 **`.clasp.json` has no permissions.** It only says which script to talk to. Example:
 
@@ -384,7 +462,7 @@ Simplified. The step marked (inferred) is not spelled out in Google's docs.
  (browser)            (script.google.com)            (accounts.google.com)
     │                        │                                 │
  1. │ open the Sheet, choose │                                 │
-    │ 📍 Campaign > item ───►│                                 │
+    │ Maps Demo > item ─────►│                                 │
     │                        │ 2. the script needs a scope     │
     │                        │    this user has not granted    │
     │◄── "Authorization required" dialog                       │
@@ -413,6 +491,12 @@ Where each setting comes from:
 | Scope list in the dialog | Inferred from the code, or `oauthScopes` in `appsscript.json` |
 | "Not verified" warning | Publishing status **Testing** (never submitted for verification) |
 | Where the response goes | Apps Script, not a URL you configure |
+
+Observed on a real run (steps 2, 3 and 5b in the diagram): a brief "Authorization is required for
+this script to run", then "Google hasn't verified this app. You've been given access to an app
+that's currently being tested.", with the buttons **Back to safety** and **Continue**. The way
+forward is **Continue**. A user who is not on the Test users list should see an access-denied
+error at that point (not observed). See step 24 for the full walkthrough.
 
 ### C2. `clasp login` (developer, once per machine)
 
@@ -471,8 +555,8 @@ Four different things are easy to mix up. Each has its own ID and lives in a dif
 
 | Object | Identified by | Lives in | In this setup |
 |---|---|---|---|
-| Google Sheet | `SHEET_ID` | Google Drive | `CampaignSheet-<timestamp>` |
-| Apps Script project ("the script") | `SCRIPT_ID` | Apps Script service | The code behind the Campaign menu |
+| Google Sheet | `SHEET_ID` | Google Drive | `MapsDemo-<timestamp>` |
+| Apps Script project ("the script") | `SCRIPT_ID` | Apps Script service | The code behind the Maps Demo menu |
 | GCP project | `PROJECT_ID` and a project number | Google Cloud | Billing, APIs, the Maps key, the consent screen |
 | Local code | The git repo | Your machine | `ui/src`, built into `ui/build/` |
 
@@ -512,7 +596,7 @@ The extension is container-bound.
    Google's bound-script guide says clasp can't create bound scripts, but in this setup the API
    confirms the script's `parentId` equals the Sheet's ID, so it did. Treat Google's page as
    possibly out of date on this point.
-2. **Script and local code: clasp clone and push.** `push_content_to_script_by_id.sh` clones the
+2. **Script and local code: clasp clone and push.** `push_demo.sh` clones the
    script by `SCRIPT_ID` into a temp folder, copies your built files over, and runs `clasp push`.
    Until you push, the script project holds only a default `appsscript.json`.
 3. **Script and GCP project: manual.** A new script starts with a Google-managed default Cloud
@@ -528,7 +612,7 @@ The extension is container-bound.
 |---|---|---|
 | `PROJECT_ID` | `init_setup/billing_linked_new_project.sh` | Phase 3 |
 | `MAPS_API_KEY` | You, with `gcloud ... get-key-string` | Phase 4, step 17 |
-| `SCRIPT_ID`, `SHEET_ID`, `SHEET_URL` | `ui/scripts/create_sheet.sh` | Phase 6, step 21 |
+| `SCRIPT_ID`, `SHEET_ID`, `SHEET_URL` | `init_setup/create_sheet.sh` | Phase 6, step 21 |
 
 ### D4. If the Sheet will not open
 
