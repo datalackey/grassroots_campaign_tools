@@ -1,4 +1,4 @@
-# Setup Guide: New Google Account to Working Sheet Extension
+# Setup Guide: A New Google Account to a Google Maps App on Google Sheets
 
 Draft, to be iterated. Steps marked **(manual)** cannot be scripted. Run all scripts from the repo root,
 because they read and write `maps_config.env` there.
@@ -75,7 +75,7 @@ Google offers a free Maps usage tier, but billing must be enabled and calls beyo
 
 ## Phase 4: Maps API key (scripted via gcloud, untested)
 
-**What and why.** Our extension relies on the Google Maps Geocoding API, which in turn, requires 
+**What and why.** The demo relies on the Google Maps Geocoding API, which in turn requires 
 an **API key**, and bills the usage to the GCP project that owns the key. So this phase does four things:
 
 1. Checks the Maps APIs are enabled in the Phase 3 project (step 13).
@@ -83,7 +83,7 @@ an **API key**, and bills the usage to the GCP project that owns the key. So thi
    for anything else (steps 14-15).
 3. Reads the key string back (step 16).
 4. Records it in `maps_config.env` (step 17). The Phase 7 push step then copies it into the
-   Apps Script project's script properties, where the extension reads it at runtime. The key never
+   Apps Script project's script properties, where the demo reads it at runtime. The key never
    goes into the source code or git, because `maps_config.env` is git-ignored.
 
 **Credentials vs. API keys.** In the Cloud Console, the *Credentials* page is where you manage the
@@ -137,7 +137,7 @@ shows an empty value, `maps_config.env` is missing `PROJECT_ID` (Phase 3 writes 
 
     No application restriction (website/IP) is set, on purpose: geocoding calls come from Google's
     servers and the map dialog's calls from a Google-hosted domain, so a referrer restriction
-    such as the `https://script.google.com/*` in `NOTES.txt` is likely to cause `REQUEST_DENIED`
+    such as `https://script.google.com/*` is likely to cause `REQUEST_DENIED`
     (unverified).
 
 16. Read back the key string:
@@ -175,7 +175,7 @@ Reference: https://developers.google.com/maps/gmp-get-started
       needs no test users or verification. The publishing status is not set in the wizard.
     - After creation, open **Audience** in the left menu. 
       - A new External app should show **Testing** (unverified). Leave it there and do not click **Publish app**. 
-        - Under **Test users**, add your account and anyone else who will try the extension.
+        - Under **Test users**, add your account and anyone else who will try the demo.
     - **Data Access**: scopes. Optional while the app is in Testing and used only by test users.
     - This screen only takes effect once the script is linked to the project (step 22). See
       [Appendix C](#appendix-c-how-test-users-authenticate-oauth) for how the pieces fit.
@@ -302,13 +302,43 @@ The demo is plain JavaScript and HTML in `demo/`, so there is no build step.
       and script. The two pushes are one-time and different: the first adds `Init.js`, the second
       removes it.
 
+## Phase 8: Control cost (recommended)
+
+Maps calls are billed to your project. Google gives a free monthly usage tier, but heavy use costs
+money, so set up alerts and avoid wasted calls. Current prices:
+[Maps Platform pricing](https://mapsplatform.google.com/pricing/).
+
+26. **Create a budget alert** (untested). Look up your billing account ID with
+    `gcloud billing accounts list`, then:
+
+    ```
+    source maps_config.env
+    gcloud billing budgets create --billing-account=<BILLING_ID> --display-name="maps-demo" \
+      --budget-amount=10USD --filter-projects="projects/$PROJECT_ID" \
+      --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0
+    ```
+
+    - The flags match `gcloud billing budgets create --help`. Change the amount to suit.
+    - **A budget only sends notifications. It does not stop spending or switch off the API.**
+    - It may need the Cloud Billing Budget API enabled
+      (`gcloud services enable billingbudgets.googleapis.com --project="$PROJECT_ID"`) and a role
+      such as Billing Account Administrator on the billing account (both unverified).
+    - Alerts are emailed to billing account admins by default (believed; the command has
+      `--disable-default-iam-recipients` to turn that off).
+27. **Do not geocode the same address twice.** The demo geocodes on every click, which is fine for
+    trying it out. In a real app:
+    - write the result next to the address, as the demo does, and skip rows that already have one;
+    - keep the address you geocoded (or a hash of it) beside the result, so you geocode again only
+      when the address changes.
+28. **Optional: cap daily requests.** In the Cloud Console, open the Geocoding API's **Quotas** page
+    and lower the daily request limit, so a runaway script fails instead of running up charges.
+    (Wording and location of this setting are unverified.)
+
 ## Known issues and gaps
 
-- `init_setup/shell.nix` duplicates the root `shell.nix`.
 - Storing the key with a temporary `Init.js` relies on top-level code running when the Sheet opens.
   This worked on the test setup (confirmed in the log). Step 24 keeps a manual fallback.
 - A trimmed API list in `billing_linked_new_project.sh` has not been run on a brand-new project.
-- `ui/` still holds the original geoCRM app and its build files, which are being removed.
 
 ## Reset
 
@@ -389,7 +419,7 @@ you in to the other.
    ├── owns ──► Billing account ─────── pays for ───────────┐
    │              (payment method)                           │
    │                                                         ▼
-   ├── owns ──► GCP project (e.g. doikayt-test-1) ◄── billing linked here
+   ├── owns ──► GCP project (e.g. my-maps-demo) ◄── billing linked here
    │              │  - APIs enabled: Maps JS, Geocoding, API Keys, Sheets, ...
    │              │  - API key (restricted to the Maps APIs)
    │              │  - OAuth consent screen
@@ -416,7 +446,7 @@ you in to the other.
 |---|---|---|---|
 | `.clasp.json` | Project folder, git-ignored (`create_sheet.sh` makes one in a temp directory) | `scriptId`, `rootDir`, `parentId` | No |
 | `~/.clasprc.json` | Your home directory | Your login: tokens, the granted `scope` list, clasp's OAuth client settings | **Yes** |
-| `appsscript.json` | `demo/appsscript.json`, and inside the script project | The extension's time zone and runtime, and optionally its `oauthScopes` | No |
+| `appsscript.json` | `demo/appsscript.json`, and inside the script project | The app's time zone and runtime, and optionally its `oauthScopes` | No |
 
 **`.clasp.json` has no permissions.** It only says which script to talk to. Example:
 
@@ -434,13 +464,13 @@ your behalf. It was set by `clasp login` and, on this machine, contained: `scrip
 answers "insufficient authentication scopes". The fix is a new `clasp login` that requests more
 scopes, not a change to your project.
 
-**`appsscript.json` holds the extension's permissions**, the ones your test users approve. By
+**`appsscript.json` holds the app's permissions**, the ones your test users approve. By
 default it has no `oauthScopes`, and Apps Script works them out from the code. See step 19.
 
 **Does setting up OAuth in Phase 5 change `~/.clasprc.json`? No.**
 - Only `clasp login` writes that file. It uses clasp's own OAuth client, so your consent screen and
   Test users list are not involved.
-- The consent screen from Phase 5 is shown to people who authorize the *extension* (Appendix C1).
+- The consent screen from Phase 5 is shown to people who authorize the *demo* (Appendix C1).
 - The one link between them is `clasp login --creds <file>`. With a JSON file downloaded from an
   OAuth client in your own GCP project, clasp logs in through that client, and your consent
   screen then applies to the developer login too. This setup does not use it.
@@ -453,7 +483,7 @@ default it has no `oauthScopes`, and Apps Script works them out from the code. S
 Three separate OAuth flows appear in this setup. Only the last one involves your test users and your
 consent screen.
 
-### C1. A test user authorizes the extension in the Sheet
+### C1. A test user authorizes the demo in the Sheet
 
 Simplified. The step marked (inferred) is not spelled out in Google's docs.
 
@@ -531,7 +561,7 @@ consent screen or your Test users list. For the token files, see Appendix B.
 |---|---|---|---|---|
 | `gcloud auth login` | You | gcloud's built-in client | Loopback on your machine (not inspected) | gcloud's |
 | `clasp login` | You | clasp's built-in client | `http://localhost:<port>` | clasp's |
-| Using the extension | Test users | Apps Script's (Google-managed) | Handled by Apps Script (inferred) | **Yours**, once linked (step 22) |
+| Using the demo | Test users | Apps Script's (Google-managed) | Handled by Apps Script (inferred) | **Yours**, once linked (step 22) |
 
 ### C4. What you configure, and where
 
@@ -558,25 +588,25 @@ Four different things are easy to mix up. Each has its own ID and lives in a dif
 | Google Sheet | `SHEET_ID` | Google Drive | `MapsDemo-<timestamp>` |
 | Apps Script project ("the script") | `SCRIPT_ID` | Apps Script service | The code behind the Maps Demo menu |
 | GCP project | `PROJECT_ID` and a project number | Google Cloud | Billing, APIs, the Maps key, the consent screen |
-| Local code | The git repo | Your machine | `ui/src`, built into `ui/build/` |
+| Local code | The git repo | Your machine | `demo/` (no build step) |
 
 ### D1. Bound versus standalone scripts
 
 A script is **container-bound** if it was created from a Sheet (or Doc, Slide, Form), and
 **standalone** if it was created on its own. Per
 [Google's guide](https://developers.google.com/apps-script/guides/bound), a bound script:
-- can use `getActiveSpreadsheet()`, `getActiveSheet()` and `getUi()` (which the extension needs to
+- can use `getActiveSpreadsheet()`, `getActiveSheet()` and `getUi()` (which the demo needs to
   add its menu and dialogs) without knowing the Sheet's ID;
 - does not appear as a file in Drive and cannot be detached from its Sheet;
 - shares the Sheet's owner and sharing list. **Only people who can edit the Sheet can run its
   script**, so a test user needs edit access to the Sheet as well as being a Test user (Phase 5).
 
-The extension is container-bound.
+The demo is container-bound.
 
 ### D2. The links, and what creates each one
 
 ```
- Local repo (ui/src, build/)
+ Local repo (demo/)
       │
       │ (2) clasp clone / clasp push        uses SCRIPT_ID
       ▼
