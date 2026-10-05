@@ -1,0 +1,76 @@
+
+2. Skip Sensitive Scope Verification (Temporarily)
+Sensitive scopes (e.g., .../auth/drive) normally require app verification.
+
+Workaround:
+
+Keep your app in "Testing" mode (under OAuth consent screen settings).
+Add your test account(s) as Test Users.
+Google won’t enforce verification until you publish publicly.
+
+3. Disable "Subdomain Matching" for Redirect URIs
+To avoid URI conflicts:
+
+In Google Cloud Console > OAuth 2.0 Client IDs > Your Client, add:
+
+text
+http://localhost  
+http://localhost:8080  
+Uncheck "Enforce strict domain verification" (if shown).
+
+step 4?
+4. Use access_type=offline & prompt=consent
+In your OAuth request URL, force a refresh token and re-consent:
+
+
+
+How to Widen Scopes (If Needed)
+If you hit "insufficient permissions" errors:
+
+Check required scopes in your appsscript.json:
+
+json
+{
+  "oauthScopes": ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+}
+
+
+
+
+IMPORTANT>>
+1. appsscript.json and clasp
+Purpose:
+
+appsscript.json is the manifest file for Apps Script projects. It defines:
+
+OAuth scopes (oauthScopes)
+
+Add-on metadata (if publishing to Workspace Marketplace)
+
+Script dependencies (libraries, APIs)
+
+
+
+Example:
+
+json
+{
+  "timeZone": "America/New_York",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/script.external_request"
+  ],
+  "dependencies": {},
+  "exceptionLogging": "STACKDRIVER"
+}
+Used by clasp:
+
+When you run clasp create or clasp pull, this file is generated/modified.
+
+clasp push deploys your code alongside this manifest to Apps Script.
+
+Required for setting OAuth scopes during development.
+
+
+
+
