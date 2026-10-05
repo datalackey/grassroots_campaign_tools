@@ -1,92 +1,79 @@
 #!/usr/bin/env bash
+# Creates a new Google Sheet with a container-bound Apps Script project (via clasp) and records
+# SCRIPT_ID, SHEET_ID and SHEET_URL in maps_config.env.
 set -euo pipefail
 
-CONFIG_FILE="$(git rev-parse --show-toplevel)/maps_config.env"
 DEBUG=false
-SHEET_NAME=""
-
-print_help() {
-  cat <<EOF
-Usage: $0 -n SHEET_NAME [-D]
-
-Options:
-  -n SHEET_NAME   Required. Must be a unique, never-before-used name.
-  -D              Enable debug output (traces API responses and intermediate values).
-  -h              Show this help message.
-
-Example:
-  $0 -n test-sheet-$(date +%s) -D
-EOF
-}
-
-while getopts ":n:Dh" opt; do
-  case ${opt} in
-    n)
-      SHEET_NAME="$OPTARG"
-      ;;
-    D)
-      DEBUG=true
-      ;;
-    h)
-      print_help
-      exit 0
-      ;;
-    \?)
-      echo "❌ Invalid option: -$OPTARG" >&2
-      print_help
-      exit 1
-      ;;
-    :)
-      echo "❌ Option -$OPTARG requires an argument." >&2
-      print_help
-      exit 1
-      ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -D|--debug) DEBUG=true; shift ;;
+    *) echo "❌ Unknown argument: $1"; exit 1 ;;
   esac
 done
 
-if [[ -z "$SHEET_NAME" ]]; then
-  echo "❌ You must specify a sheet name with -n" >&2
-  print_help
+source "$(dirname "${BASH_SOURCE[0]}")/utils.sh"
+ensure_logged_in
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "❌ maps_config.env not found at: $CONFIG_FILE"
   exit 1
 fi
 
-echo "📝 Go to: https://sheets.new and create a new sheet."
-echo "📛 Name it exactly: '$SHEET_NAME'"
-echo "🚨 Next step: Open Extensions menu item, then → Apps Script."
-echo "📌 Then rename the project associated with the script (e.g. 'Some New Random Name'), then save ."
-echo "🕓 Wait 5–10 seconds, so changes can propagate enough to run the next automation script."
-read -p "✅ Press Enter when you're done: "
+PROJECT_TITLE="MapsDemo-$(date +%s)"
+TMP_DIR="$(mktemp -d /tmp/sheet_create_XXXX)"
+echo "📁 Using temp working directory: $TMP_DIR"
+cd "$TMP_DIR"
 
-# 🔐 Ensure clasp is logged in
-if ! jq -e '.tokens.default.access_token' ~/.clasprc.json >/dev/null 2>&1; then
-  echo "🔐 Running clasp login..."
-  clasp login
-fi
+# === Create container-bound script with new Google Sheet ===
+echo "📄 Running: clasp create --title \"$PROJECT_TITLE\" --type sheets"
+clasp create --title "$PROJECT_TITLE" --type sheets > create.log
 
-# 🔑 Extract access token
-ACCESS_TOKEN=$(jq -r '.tokens.default.access_token' ~/.clasprc.json)
-
-# 🔍 Query Drive API for Sheet details
-[[ "$DEBUG" == "true" ]] && echo "🔎 Searching for spreadsheet named '$SHEET_NAME'..."
-SHEET_DETAILS=$(curl -s \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  "https://www.googleapis.com/drive/v3/files?q=name%3D'${SHEET_NAME}'%20and%20mimeType%3D'application%2Fvnd.google-apps.spreadsheet'")
-
-[[ "$DEBUG" == "true" ]] && echo "$SHEET_DETAILS" | jq
-
-# 📥 Extract Sheet ID
-SHEET_ID=$(echo "$SHEET_DETAILS" | jq -r '.files[0].id')
-
-# 🧯 Handle not found
-if [[ -z "$SHEET_ID" || "$SHEET_ID" == "null" ]]; then
-  echo "❌ Could not find a spreadsheet named '$SHEET_NAME'."
+SCRIPT_ID=$(jq -r '.scriptId // empty' .clasp.json 2>/dev/null || true)
+if [[ -z "$SCRIPT_ID" ]]; then
+  echo "❌ Could not extract scriptId from .clasp.json"
+  cat create.log
   exit 1
 fi
 
-echo "✅ Found Sheet ID: $SHEET_ID"
+# === The Sheet is the script's parent: read its ID from the Apps Script API ===
+ACCESS_TOKEN=$(get_clasp_access_token)
+SCRIPT_INFO=$(curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://script.googleapis.com/v1/projects/${SCRIPT_ID}")
+[[ "$DEBUG" == true ]] && echo "$SCRIPT_INFO" | jq
 
-# 🧾 Append to maps_config.env
-echo "SHEET_NAME=\"$SHEET_NAME\"" >> "$CONFIG_FILE"
-echo "SHEET_ID=\"$SHEET_ID\"" >> "$CONFIG_FILE"
-echo "🧷 Added SHEET_NAME and SHEET_ID to $CONFIG_FILE"
+SHEET_ID=$(echo "$SCRIPT_INFO" | jq -r '.parentId // empty')
+if [[ -z "$SHEET_ID" ]]; then
+  echo "❌ Could not determine SHEET_ID from the Apps Script API"
+  exit 1
+fi
 
+SHEET_URL="https://docs.google.com/spreadsheets/d/${SHEET_ID}"
+echo "✅ SCRIPT_ID = $SCRIPT_ID"
+echo "✅ SHEET_ID  = $SHEET_ID"
+echo "✅ SHEET_URL = $SHEET_URL"
+
+echo "💾 Updating $CONFIG_FILE..."
+update_env_var SCRIPT_ID "$SCRIPT_ID"
+update_env_var SHEET_ID "$SHEET_ID"
+update_env_var SHEET_URL "$SHEET_URL"
+source "$CONFIG_FILE"
+
+# === Manual step: link the script to the real GCP project ===
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
+ACCOUNT=$(gcloud config get-value account 2>/dev/null)
+
+cat <<EOF
+
+⚠️  MANUAL STEP REQUIRED (use a private window signed in only as $ACCOUNT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Link this script to your GCP project so your API key and billing apply:
+  GCP Project ID:     $PROJECT_ID
+  GCP Project Number: $PROJECT_NUMBER
+
+1. Open: ${SHEET_URL}?authuser=${ACCOUNT}
+2. Extensions > Apps Script > Project Settings (gear)
+3. Google Cloud Platform (GCP) Project > Change project
+4. Paste $PROJECT_NUMBER and click Set project
+
+EOF
+read -rp "🛑 Press [ENTER] when you've finished linking the script to your GCP project..."

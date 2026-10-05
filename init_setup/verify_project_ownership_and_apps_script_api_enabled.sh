@@ -1,77 +1,62 @@
+#!/usr/bin/env bash
 ############################################################################
-#  USAGE:  bash verify_project_ownership_and_apps_script_api_enabled.sh
+#  USAGE:  bash init_setup/verify_project_ownership_and_apps_script_api_enabled.sh
 #
 # Purpose:
-#   Ensures that the currently active `gcloud` account has
-#   sufficient permissions (Owner or Editor) on the GCP
-#   project defined in `maps_config.env`.
+#   1. Confirms the active gcloud account is Owner or Editor of PROJECT_ID
+#      (from maps_config.env at the repo root).
+#   2. Asks you to confirm the Apps Script API is switched on for your user
+#      (a per-user setting that cannot be checked from here).
 #
-# Why this matters:
-#   Many gcloud operations (e.g. linking Apps Script projects,
-#   enabling APIs, or using `clasp`) fail or behave
-#   unpredictably when the account lacks Editor/Owner roles.
-#
-# Expected:
-#   - A config file named `maps_config.env` in the working dir
-#   - It must define `PROJECT_ID=...`
-#
-# Behavior:
-#   - Reads the current gcloud active account
-#   - Checks if the account is an Owner or Editor of PROJECT_ID
-#   - Exits with an error if not
+# Why: gcloud and clasp operations fail in confusing ways without the right
+# role, and `clasp create` fails if the Apps Script API user setting is off.
 ############################################################################
+set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/utils.sh"
 
-function assert_project_owner_or_editor() {
-  local CONFIG_FILE="./maps_config.env"
-
-  # Ensure config file exists
+assert_project_owner_or_editor() {
   if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "❌ ERROR: Config file $CONFIG_FILE not found"
+    echo "❌ ERROR: $CONFIG_FILE not found. Run billing_linked_new_project.sh first."
     exit 1
   fi
-
-  # Load PROJECT_ID from config file
   source "$CONFIG_FILE"
-
-  if [[ -z "$PROJECT_ID" ]]; then
+  if [[ -z "${PROJECT_ID:-}" ]]; then
     echo "❌ ERROR: PROJECT_ID not set in $CONFIG_FILE"
     exit 1
   fi
 
-  local ACTIVE_ACCOUNT
-  ACTIVE_ACCOUNT=$(gcloud config get-value account 2>/dev/null)
+  local account roles
+  account=$(gcloud config get-value account 2>/dev/null)
 
-  local HAS_ACCESS
-  HAS_ACCESS=$(gcloud projects get-iam-policy "$PROJECT_ID" \
-    --flatten="bindings[].members" \
-    --format='value(bindings.role)' \
-    --filter="bindings.members:user:$ACTIVE_ACCOUNT" | grep -E 'roles/(owner|editor)')
-
-  if [[ -z "$HAS_ACCESS" ]]; then
-    echo "❌ ERROR: Account $ACTIVE_ACCOUNT is not owner/editor of $PROJECT_ID"
+  # A failure here is usually an expired login (e.g. Workspace session control), not a missing role.
+  if ! roles=$(gcloud projects get-iam-policy "$PROJECT_ID" \
+      --flatten="bindings[].members" \
+      --format='value(bindings.role)' \
+      --filter="bindings.members:user:$account"); then
+    echo "❌ ERROR: could not read the IAM policy of $PROJECT_ID as $account."
+    echo "   If the message above mentions invalid_grant, run: gcloud auth login"
     exit 1
+  fi
+
+  if echo "$roles" | grep -qE 'roles/(owner|editor)'; then
+    echo "✅ Access verified: $account has rights on $PROJECT_ID"
   else
-    echo "✅ Access verified: $ACTIVE_ACCOUNT has rights on $PROJECT_ID"
+    echo "❌ ERROR: $account is not owner/editor of $PROJECT_ID"
+    exit 1
   fi
 }
 
-
-
-
-function assert_google_apps_scripts_api_enabled_for_user() {
-    echo "🔍 Verify that Apps Script API is enabled at user level (should say 'On'):"
-    echo "   👉 Open: https://script.google.com/home/usersettings"
-    echo ""
-    read -p "Have you enabled the Google Apps Script API? [y/N] " -r
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-      echo "❌ Setup aborted. Please enable the API toggle and re-run."
-      exit 1
-    fi
-    echo "✅ Proceeding with setup..."
+assert_apps_script_api_enabled_for_user() {
+  echo "🔍 Verify that the Apps Script API is On for your user:"
+  echo "   👉 Open (private window): https://script.google.com/home/usersettings"
+  read -p "Is the Google Apps Script API switched On? [y/N] " -r
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "❌ Please switch it on and re-run."
+    exit 1
+  fi
+  echo "✅ Proceeding."
 }
 
-
 assert_project_owner_or_editor
-
-assert_google_apps_scripts_api_enabled_for_user
+assert_apps_script_api_enabled_for_user
